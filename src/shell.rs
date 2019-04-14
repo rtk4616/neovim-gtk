@@ -449,7 +449,7 @@ impl State {
                 debug!("ui_try_resize {}/{}", columns, rows);
                 resize_timer.set(None);
 
-                nvim.ui_try_resize_async(columns as u64, rows as u64)
+                nvim.ui_try_resize_async(columns as i64, rows as i64)
                     .cb(|r| r.report_err())
                     .call();
 

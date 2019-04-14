@@ -1,7 +1,7 @@
 use std::result;
 use std::sync::{mpsc, Arc};
 
-use neovim_lib::{Handler, Value};
+use neovim_lib::{Handler, RequestHandler, Value};
 
 use ui::UiMutex;
 use shell;
@@ -211,12 +211,14 @@ where
     });
 }
 
+impl RequestHandler for NvimHandler {
+    fn handle_request(&mut self, name: &str, args: Vec<Value>) -> result::Result<Value, Value> {
+        self.nvim_cb_req(name, args)
+    }
+}
+
 impl Handler for NvimHandler {
     fn handle_notify(&mut self, name: &str, args: Vec<Value>) {
         self.nvim_cb(name, args);
-    }
-
-    fn handle_request(&mut self, name: &str, args: Vec<Value>) -> result::Result<Value, Value> {
-        self.nvim_cb_req(name, args)
     }
 }

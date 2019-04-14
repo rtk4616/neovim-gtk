@@ -154,8 +154,8 @@ pub fn post_start_init(
     nvim.borrow()
         .unwrap()
         .ui_attach(
-            cols,
-            rows,
+            cols as i64,
+            rows as i64,
             UiAttachOptions::new()
                 .set_popupmenu_external(true)
                 .set_tabline_external(true),

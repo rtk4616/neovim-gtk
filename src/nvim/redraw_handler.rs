@@ -117,6 +117,12 @@ pub enum NvimCommand {
     PreferDarkTheme(bool),
 }
 
+fn set_option(ui: &mut shell::State, option: UiOption) -> result::Result<(), String> {
+    ui.nvim()
+        .ok_or_else(|| "Nvim not initialized".to_owned())
+        .and_then(|mut nvim| nvim.set_option(option).map_err(|e| e.to_string()))
+}
+
 pub fn call_gui_event(
     ui: &mut shell::State,
     method: &str,
@@ -134,20 +140,9 @@ pub fn call_gui_event(
             opt => error!("Unknown option {}", opt),
         },
         "Option" => match try_str!(args[0]) {
-            "Popupmenu" => ui
-                .nvim()
-                .ok_or_else(|| "Nvim not initialized".to_owned())
-                .and_then(|mut nvim| {
-                    nvim.set_option(UiOption::ExtPopupmenu(try_uint!(args[1]) == 1))
-                        .map_err(|e| e.to_string())
-                })?,
-            "Tabline" => ui
-                .nvim()
-                .ok_or_else(|| "Nvim not initialized".to_owned())
-                .and_then(|mut nvim| {
-                    nvim.set_option(UiOption::ExtTabline(try_uint!(args[1]) == 1))
-                        .map_err(|e| e.to_string())
-                })?,
+            "Popupmenu" => set_option(ui, UiOption::ExtPopupmenu(try_uint!(args[1]) == 1))?,
+            "Tabline" => set_option(ui, UiOption::ExtTabline(try_uint!(args[1]) == 1))?,
+            "Termcolors" => set_option(ui, UiOption::ExtTermcolors(try_uint!(args[1]) == 1))?,
             "Cmdline" => ui
                 .nvim()
                 .ok_or_else(|| "Nvim not initialized".to_owned())
