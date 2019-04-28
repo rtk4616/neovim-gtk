@@ -1,10 +1,13 @@
+use crate::highlight::Highlight;
+use std::rc::Rc;
+
 mod cell;
 mod item;
 mod line;
 mod model_layout;
 mod model_rect;
 
-pub use self::cell::{Attrs, Cell};
+pub use self::cell::Cell;
 pub use self::item::Item;
 pub use self::line::{Line, StyledLine};
 pub use self::model_layout::ModelLayout;
@@ -16,10 +19,6 @@ pub struct UiModel {
     cur_row: usize,
     cur_col: usize,
     model: Box<[Line]>,
-    top: usize,
-    bot: usize,
-    left: usize,
-    right: usize,
 }
 
 impl UiModel {
@@ -35,10 +34,6 @@ impl UiModel {
             cur_row: 0,
             cur_col: 0,
             model: model.into_boxed_slice(),
-            top: 0,
-            bot: (rows - 1) as usize,
-            left: 0,
-            right: (columns - 1) as usize,
         }
     }
 
@@ -49,10 +44,6 @@ impl UiModel {
             cur_row: 0,
             cur_col: 0,
             model: Box::new([]),
-            top: 0,
-            bot: 0,
-            left: 0,
-            right: 0,
         }
     }
 
@@ -91,34 +82,30 @@ impl UiModel {
         (self.cur_row, self.cur_col)
     }
 
-    pub fn put(&mut self, ch: &str, double_width: bool, attrs: Option<&Attrs>) -> ModelRect {
-        let mut changed_region = self.cur_point();
-        let line = &mut self.model[self.cur_row];
-        line.dirty_line = true;
-
-        let cell = &mut line[self.cur_col];
-
-        cell.ch.clear();
-        cell.ch.push_str(ch);
-
-        cell.attrs = attrs.map(Attrs::clone).unwrap_or_else(Attrs::new);
-        cell.attrs.double_width = double_width;
-        cell.dirty = true;
-        self.cur_col += 1;
-        if self.cur_col >= self.columns {
-            self.cur_col -= 1;
-        }
-
-        changed_region.join(&ModelRect::point(self.cur_col, self.cur_row));
-
-        changed_region
+    pub fn put_one(&mut self, row: usize, col: usize, ch: &str, double_width: bool, hl: Rc<Highlight>) {
+        self.put(row, col, ch, double_width, 1, hl);
     }
 
-    pub fn set_scroll_region(&mut self, top: u64, bot: u64, left: u64, right: u64) {
-        self.top = top as usize;
-        self.bot = bot as usize;
-        self.left = left as usize;
-        self.right = right as usize;
+    pub fn put(
+        &mut self,
+        row: usize,
+        col: usize,
+        ch: &str,
+        double_width: bool,
+        repeat: usize,
+        hl: Rc<Highlight>,
+    ) {
+        let line = &mut self.model[row];
+        line.dirty_line = true;
+
+        for offset in 0..repeat {
+            let cell = &mut line[col + offset];
+            cell.ch.clear();
+            cell.ch.push_str(ch);
+            cell.hl = hl.clone();
+            cell.double_width = double_width;
+            cell.dirty = true;
+        }
     }
 
     /// Copy rows from 0 to to_row, col from 0 self.columns
@@ -126,7 +113,7 @@ impl UiModel {
     /// Don't do any validation!
     pub fn swap_rows(&mut self, target: &mut UiModel, to_row: usize) {
         for (row_idx, line) in self.model[0..to_row + 1].iter_mut().enumerate() {
-            let mut target_row = &mut target.model[row_idx];
+            let target_row = &mut target.model[row_idx];
             line.swap_with(target_row, 0, self.columns - 1);
         }
     }
@@ -152,9 +139,7 @@ impl UiModel {
         source_row.swap_with(target_row, left_col, right_col);
     }
 
-    pub fn scroll(&mut self, count: i64) -> ModelRect {
-        let (top, bot, left, right) = (self.top as i64, self.bot as i64, self.left, self.right);
-
+    pub fn scroll(&mut self, top: i64, bot: i64, left: usize, right: usize, count: i64, default_hl: &Rc<Highlight>) -> ModelRect {
         if count > 0 {
             for row in top..(bot - count + 1) {
                 self.swap_row(row, count, left, right);
@@ -166,29 +151,22 @@ impl UiModel {
         }
 
         if count > 0 {
-            self.clear_region((bot - count + 1) as usize, bot as usize, left, right);
+            self.clear_region((bot - count + 1) as usize, bot as usize, left, right, default_hl);
         } else {
-            self.clear_region(top as usize, (top - count - 1) as usize, left, right);
+            self.clear_region(top as usize, (top - count - 1) as usize, left, right, default_hl);
         }
 
         ModelRect::new(top as usize, bot as usize, left, right)
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self, default_hl: &Rc<Highlight>) {
         let (rows, columns) = (self.rows, self.columns);
-        self.clear_region(0, rows - 1, 0, columns - 1);
+        self.clear_region(0, rows - 1, 0, columns - 1, default_hl);
     }
 
-    pub fn eol_clear(&mut self) -> ModelRect {
-        let (cur_row, cur_col, columns) = (self.cur_row, self.cur_col, self.columns);
-        self.clear_region(cur_row, cur_row, cur_col, columns - 1);
-
-        ModelRect::new(cur_row, cur_row, cur_col, columns - 1)
-    }
-
-    fn clear_region(&mut self, top: usize, bot: usize, left: usize, right: usize) {
+    fn clear_region(&mut self, top: usize, bot: usize, left: usize, right: usize, default_hl: &Rc<Highlight>) {
         for row in &mut self.model[top..bot + 1] {
-            row.clear(left, right);
+            row.clear(left, right, default_hl);
         }
     }
 
@@ -285,40 +263,10 @@ mod tests {
     }
 
     #[test]
-    fn test_eol_clear_area() {
-        let mut model = UiModel::new(10, 20);
-
-        model.set_cursor(1, 2);
-
-        let rect = model.eol_clear();
-
-        assert_eq!(1, rect.top);
-        assert_eq!(2, rect.left);
-        assert_eq!(1, rect.bot);
-        assert_eq!(19, rect.right);
-    }
-
-    #[test]
-    fn test_put_area() {
-        let mut model = UiModel::new(10, 20);
-
-        model.set_cursor(1, 1);
-
-        let rect = model.put(" ", false, None);
-
-        assert_eq!(1, rect.top);
-        assert_eq!(1, rect.left);
-        assert_eq!(1, rect.bot);
-        assert_eq!(2, rect.right);
-    }
-
-    #[test]
     fn test_scroll_area() {
         let mut model = UiModel::new(10, 20);
 
-        model.set_scroll_region(1, 5, 1, 5);
-
-        let rect = model.scroll(3);
+        let rect = model.scroll(1, 5, 1, 5, 3, &Rc::new(Highlight::new()));
 
         assert_eq!(1, rect.top);
         assert_eq!(1, rect.left);

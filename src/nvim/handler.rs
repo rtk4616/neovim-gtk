@@ -3,8 +3,8 @@ use std::sync::{mpsc, Arc};
 
 use neovim_lib::{Handler, RequestHandler, Value};
 
-use ui::UiMutex;
-use shell;
+use crate::ui::UiMutex;
+use crate::shell;
 use glib;
 
 use super::repaint_mode::RepaintMode;
@@ -179,7 +179,10 @@ fn call_redraw_handler(
                             Value::Array(ar) => ar,
                             _ => vec![],
                         };
-                        let call_reapint_mode = redraw_handler::call(ui, &ev_name, args)?;
+                        let call_reapint_mode = match redraw_handler::call(ui, &ev_name, args) {
+                            Ok(mode) => mode,
+                            Err(desc) => return Err(format!("Event {}\n{}", ev_name, desc)),
+                        };
                         repaint_mode = repaint_mode.join(call_reapint_mode);
                     }
                 } else {
@@ -194,7 +197,6 @@ fn call_redraw_handler(
     }
 
     ui.on_redraw(&repaint_mode);
-    ui.redraw_handler_finish();
     Ok(())
 }
 

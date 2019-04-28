@@ -1,11 +1,13 @@
 use std::ops::{Index, IndexMut};
+use std::rc::Rc;
 
 use pango;
 
 use super::cell::Cell;
 use super::item::Item;
-use color;
-use render;
+use crate::color;
+use crate::render;
+use crate::highlight::{HighlightMap, Highlight};
 
 pub struct Line {
     pub line: Box<[Cell]>,
@@ -40,9 +42,9 @@ impl Line {
         }
     }
 
-    pub fn clear(&mut self, left: usize, right: usize) {
+    pub fn clear(&mut self, left: usize, right: usize, default_hl: &Rc<Highlight>) {
         for cell in &mut self.line[left..right + 1] {
-            cell.clear();
+            cell.clear(default_hl.clone());
         }
         self.dirty_line = true;
     }
@@ -248,7 +250,7 @@ pub struct StyledLine {
 impl StyledLine {
     pub fn from(
         line: &Line,
-        color_model: &color::ColorModel,
+        hl: &HighlightMap,
         font_features: &render::FontFeatures,
     ) -> Self {
         let average_capacity = line.line.len() * 4 * 2; // code bytes * grapheme cluster
@@ -260,7 +262,7 @@ impl StyledLine {
         let mut style_attr = StyleAttr::new();
 
         for (cell_idx, cell) in line.line.iter().enumerate() {
-            if cell.attrs.double_width {
+            if cell.double_width {
                 continue;
             }
 
@@ -275,17 +277,17 @@ impl StyledLine {
                 cell_to_byte.push(cell_idx);
             }
 
-            let next = style_attr.next(byte_offset, byte_offset + len, cell, color_model);
+            let next = style_attr.next(byte_offset, byte_offset + len, cell, hl);
             if let Some(next) = next {
-                style_attr.insert(&attr_list);
+                style_attr.insert_into(&attr_list);
                 style_attr = next;
             }
 
             byte_offset += len;
         }
 
-        style_attr.insert(&attr_list);
-        font_features.insert_attr(&attr_list);
+        style_attr.insert_into(&attr_list);
+        font_features.insert_into(&attr_list);
 
         StyledLine {
             line_str,
@@ -301,6 +303,7 @@ struct StyleAttr<'c> {
     foreground: Option<&'c color::Color>,
     background: Option<&'c color::Color>,
     empty: bool,
+    space: bool,
 
     start_idx: usize,
     end_idx: usize,
@@ -314,6 +317,7 @@ impl<'c> StyleAttr<'c> {
             foreground: None,
             background: None,
             empty: true,
+            space: false,
 
             start_idx: 0,
             end_idx: 0,
@@ -324,14 +328,15 @@ impl<'c> StyleAttr<'c> {
         start_idx: usize,
         end_idx: usize,
         cell: &'c Cell,
-        color_model: &'c color::ColorModel,
+        hl: &'c HighlightMap,
     ) -> Self {
         StyleAttr {
-            italic: cell.attrs.italic,
-            bold: cell.attrs.bold,
-            foreground: color_model.cell_fg(cell),
-            background: color_model.cell_bg(cell),
+            italic: cell.hl.italic,
+            bold: cell.hl.bold,
+            foreground: hl.cell_fg(cell),
+            background: hl.cell_bg(cell),
             empty: false,
+            space: cell.ch.is_empty(),
 
             start_idx,
             end_idx,
@@ -343,9 +348,16 @@ impl<'c> StyleAttr<'c> {
         start_idx: usize,
         end_idx: usize,
         cell: &'c Cell,
-        color_model: &'c color::ColorModel,
+        hl: &'c HighlightMap,
     ) -> Option<StyleAttr<'c>> {
-        let style_attr = Self::from(start_idx, end_idx, cell, color_model);
+        // don't check attr for space
+        if self.space && cell.ch.is_empty() {
+            self.end_idx = end_idx;
+            return None;
+        }
+
+
+        let style_attr = Self::from(start_idx, end_idx, cell, hl);
 
         if self != &style_attr {
             Some(style_attr)
@@ -355,7 +367,7 @@ impl<'c> StyleAttr<'c> {
         }
     }
 
-    fn insert(&self, attr_list: &pango::AttrList) {
+    fn insert_into(&self, attr_list: &pango::AttrList) {
         if self.empty {
             return;
         }
@@ -422,7 +434,7 @@ mod tests {
 
         let styled_line = StyledLine::from(
             &line,
-            &color::ColorModel::new(),
+            &HighlightMap::new(),
             &render::FontFeatures::new(),
         );
         assert_eq!("abc", styled_line.line_str);
